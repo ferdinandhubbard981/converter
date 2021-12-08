@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${fileDirname}/converter",
-			//"args": ["bands.pgm"],
+			"args": ["test.pgm"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],
