@@ -15,6 +15,8 @@ enum { NONE = 0, BLOCK = 2, COLOUR = 3, TARGETX = 4, TARGETY = 5, PAUSE = 7};
 // Data structure holding the drawing state
 typedef struct state { int x, y, tx, ty; unsigned char tool; unsigned int data;} state;
 
+typedef struct colourFreq {int colour, freq;} colourFreq;
+typedef struct colourFreqList {colourFreq* arr; int len;} colourFreqList;
 
 struct rectangle {
     int X, Y, W, H, RGBAVal; //x and y are respective axis values of the top left pixel of the block. The pixel 0, 0 is at the top left of the byte array.
@@ -35,9 +37,10 @@ typedef struct byteArray byteArray;
 
 struct PGM {
     int H, W, maxVal; //HEIGHT, WIDTH, maximum value for a colour
-    unsigned short** rowArray; //Array of rows from top to bottom e.g. rowArray[0] = top row of pixels;
+    byte** rowArray; //Array of rows from top to bottom e.g. rowArray[0] = top row of pixels;
 };
 typedef struct PGM PGM;
+
 
 void error(bool* errorVar, char* msg) {
     *errorVar = true;
@@ -45,6 +48,13 @@ void error(bool* errorVar, char* msg) {
 }
 
 //Miscellaneous functions START
+
+rectangleArr* initializeRectangleArr() {
+    rectangleArr* newRectArr = malloc(sizeof(rectangleArr));
+    newRectArr->len = 0;
+    newRectArr->arr = malloc(0);
+    return newRectArr;
+}
 
 bool isMultiplePowerTwo(int input, int base) {
     while (input > base) {
@@ -85,6 +95,7 @@ char** split(char* input, const char* delimiter, int* outputlength) {
   return output;
 }
 
+
 void destroy2DArr(void** arr, int len) {
     while (len-- > 0) {
         free(arr[len]);
@@ -92,10 +103,16 @@ void destroy2DArr(void** arr, int len) {
     free(arr);
 }
 
+void destroyPGM(PGM* input) {
+    destroy2DArr(input->rowArray, input->H);
+    free(input);
+}
+
 void destroyByteArray(byteArray* byteArr) {
     free(byteArr->bytes);
     free(byteArr);
 }
+
 int getByteFileLen(FILE* byteFile) {
     fseek(byteFile, 0L, SEEK_END);
     int output = ftell(byteFile);
@@ -151,18 +168,128 @@ PGM* readPGM(char* fileName) {
     PGMData->H = readASCIIBytes(byteArr, &index);
     PGMData->maxVal = readASCIIBytes(byteArr, &index);
     int bytesPerPixel = 1;
-    PGMData->rowArray = malloc(PGMData->H * sizeof(unsigned short*));
+    PGMData->rowArray = malloc(PGMData->H * sizeof(byte*));
     if (PGMData->maxVal > 255) bytesPerPixel = 2;
     //read in rest of bytes
     for (int i = 0; i < PGMData->H; i++) {
-        PGMData->rowArray[i] = malloc(PGMData->W * sizeof(unsigned short));
+        PGMData->rowArray[i] = malloc(PGMData->W * sizeof(byte));
         for (int j = 0; j < PGMData->W; j++) {
-            PGMData->rowArray[i][j] = (unsigned short)convertNBytes(byteArr, bytesPerPixel, &index);
+            PGMData->rowArray[i][j] = (byte)convertNBytes(byteArr, bytesPerPixel, &index);
         }
     }
     destroyByteArray(byteArr);
     return PGMData;
 }
+
+/*
+rectangleArr* constructBlocks(int colour, PGM* illegalPixels, PGM* PGMData) {
+    
+    
+    PGM* unfilledRequiredPixels = malloc(sizeof(PGM));
+    //find smallest rectangle that contains all unfilled required pixels
+    findBoundsContainingUnfilled()
+    while (unfilledRequiredPixels is not empty) {
+        updateUnfilledRequiredPixels()
+        currentPixel = find an unfilledRequiredPixel
+        //form largest block that contains currentPixel and does not contain illegal pixels
+        while (outerColumn does not contain unfilledRequiredPixel) {
+            delete column
+        }
+
+        while (outerRow does not contain unfilledRequiredPixel) {
+            delete row
+        }
+
+    }
+    
+    
+    
+    
+    
+    //old
+    //form largest blocks that don't collide with illegal pixels
+    //and don't fill unecessary lines/ rows (that don't contain any unfiledCurrentColourPixels)
+}
+*/
+
+colourFreqList* getColourFreqs(PGM* PGMData) {
+    colourFreqList* colourFreqs = malloc(sizeof(colourFreqList));
+    colourFreqs->len = 0;
+    colourFreqs->arr = malloc(0);
+    
+    for (int i = 0; i < PGMData->H * PGMData->W; i++) {
+        bool foundColour = false;
+        for (int j = 0; j < colourFreqs->len; j++) {
+            if (colourFreqs->arr[j].colour == PGMData->rowArray[i / PGMData->W][i % PGMData->W])  {
+                colourFreqs->arr[j].freq += 1;
+                foundColour = true;
+            }
+        }
+        if (!foundColour) {
+            //allocate memory for new colour
+            colourFreqs->len++;
+            colourFreqs->arr = realloc(colourFreqs->arr, colourFreqs->len * sizeof(colourFreq));
+            //assign new colour
+            colourFreqs->arr[colourFreqs->len-1].colour = PGMData->rowArray[i / PGMData->W][i % PGMData->W];
+            //assign freq to 1 for new colour
+            colourFreqs->arr[colourFreqs->len-1].freq = 1;
+
+        }
+        
+    }
+    return colourFreqs;
+}
+
+void swap(colourFreqList* colourFreqs, int i, int j) {
+    colourFreq temp = colourFreqs->arr[j];
+    colourFreqs->arr[j] = colourFreqs->arr[i];
+    colourFreqs->arr[i] = temp;
+}
+
+void sortDescending(colourFreqList* colourFreqs) {
+
+    for (int i = 0; i < colourFreqs->len-1; i++) { 
+        for (int j = 0; j < colourFreqs->len-i-1; j++) {
+            if (colourFreqs->arr[j].freq < colourFreqs->arr[j+1].freq) {
+                swap(colourFreqs, i, j);
+            }
+        }
+    }
+}
+
+PGM* copyPGM(PGM* PGMData) {
+    PGM* newPGM = malloc(sizeof(PGM));
+    newPGM->W = PGMData->W;
+    newPGM->H = PGMData->H;
+    newPGM->maxVal = PGMData->maxVal;
+    newPGM->rowArray = malloc(newPGM->H * sizeof(byte*));
+    for (int i = 0; i < newPGM->H; i++) {
+        newPGM->rowArray[i] = malloc(newPGM->W * sizeof(byte));
+    }
+    return newPGM;
+}
+
+PGM* setIllegalPixels(PGM* PGMData, colourFreqList* colourFreqs, int currentColourIndex) { 
+    PGM* illegalPixels = copyPGM(PGMData);
+
+}
+
+rectangleArr* newRLE(PGM* PGMData) {
+    rectangleArr* blocks = malloc(sizeof(rectangleArr));
+    colourFreqList* colourFreqs = getColourFreqs(PGMData);
+    sortDescending(colourFreqs);
+
+    for (int i = 0; i < colourFreqs->len; i++) {
+        PGM* illegalPixels = setIllegalPixels();
+        rectangleArr* currentColourBlocks = constructBlocks();
+        appendBlocks(blocks, currentColourBlocks);
+        destroyPGM(illegalPixels);
+        
+    }
+    destroyPGM(PGMData);
+    return blocks;
+}
+
 
 rectangleArr* RLE(PGM* PGMData) {
     rectangleArr* blocks = malloc(sizeof(rectangleArr));

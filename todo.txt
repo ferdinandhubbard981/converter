@@ -1,0 +1,13 @@
+getColorFrequencies()
+sortDescendingFrequencies()
+for each colour {
+    formNucleatedShapes()
+    contructShapes()
+    OrderBlocks()
+}
+
+constructShapes(pixel i, shape s) {
+    formLargest rectangle that contains i && does not cross illegal pixels.
+}
+
+
