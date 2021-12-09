@@ -1,13 +1,4 @@
-getColorFrequencies()
-sortDescendingFrequencies()
-for each colour {
-    formNucleatedShapes()
-    contructShapes()
-    OrderBlocks()
-}
-
-constructShapes(pixel i, shape s) {
-    formLargest rectangle that contains i && does not cross illegal pixels.
-}
-
-
+change setData function, to not push until it encounters a byte that is != 0
+check if targetx/y is more efficient than rundy/dx
+strip rows and columns
+perfect bands sketch is 91 bytes
