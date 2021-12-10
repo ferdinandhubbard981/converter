@@ -6,7 +6,7 @@
 #define PGMEXT "pgm"
 #define SKEXT "sk"
 typedef unsigned char byte;
-
+int blockCount = 0;
 enum { DX = 0, DY = 1, TOOL = 2, DATA = 3};
 
 // Tool Types
@@ -15,12 +15,12 @@ enum { NONE = 0, BLOCK = 2, COLOUR = 3, TARGETX = 4, TARGETY = 5, PAUSE = 7};
 // Data structure holding the drawing state
 typedef struct state { int x, y, tx, ty; unsigned char tool; unsigned int data;} state;
 
-typedef struct bounds {int leftColIndex, rightColIndex, topRowIndex, botRowIndex;} bounds;
+typedef struct bounds {int leftBoundIndex, rightBoundIndex, topBoundIndex, botBoundIndex;} bounds;
 typedef struct colourFreq {byte colour; int freq;} colourFreq;
 typedef struct colourFreqList {colourFreq* arr; int len;} colourFreqList;
 
 struct rectangle {
-    int X, Y, W, H, RGBAVal; //x and y are respective axis values of the top left pixel of the block. The pixel 0, 0 is at the top left of the byte array.
+    int X, Y, W, H, grayVal; //x and y are respective axis values of the top left pixel of the block. The pixel 0, 0 is at the top left of the byte array.
 };
 typedef struct rectangle rectangle;
 
@@ -97,7 +97,14 @@ char** split(char* input, const char* delimiter, int* outputlength) {
 }
 
 
-void destroy2DArr(void** arr, int len) {
+void destroy2DByteArr(byte** arr, int len) {
+    while (len-- > 0) {
+        free(arr[len]);
+    }
+    free(arr);
+}
+
+void destroy2DCharArr(char** arr, int len) {
     while (len-- > 0) {
         free(arr[len]);
     }
@@ -105,7 +112,7 @@ void destroy2DArr(void** arr, int len) {
 }
 
 void destroyPGM(PGM* input) {
-    destroy2DArr(input->rowArray, input->H);
+    destroy2DByteArr(input->rowArray, input->H);
     free(input);
 }
 
@@ -222,7 +229,9 @@ void sortDescending(colourFreqList* colourFreqs) {
     for (int i = 0; i < colourFreqs->len-1; i++) { 
         for (int j = 0; j < colourFreqs->len-i-1; j++) {
             if (colourFreqs->arr[j].freq < colourFreqs->arr[j+1].freq) {
-                swap(colourFreqs, i, j);
+                //printf("[j] [j+1] %d %d\n", colourFreqs->arr[j].freq, colourFreqs->arr[j+1].freq);
+                swap(colourFreqs, j, j+1);
+                //printf("[j] [j+1] %d %d\n", colourFreqs->arr[j].freq, colourFreqs->arr[j+1].freq);
             }
         }
     }
@@ -278,73 +287,63 @@ int findPixelInMask(PGM* pixelMask) {
 
 }
 
-bool colContainsIllegal(PGM* illegalPixels, int colIndex, int topBoundIndex, int botBoundIndex) {
-    if (colIndex == illegalPixels->W || colIndex == -1) return true;
-    for (int i = topBoundIndex; i <= botBoundIndex; i++) {
-        if (illegalPixels->rowArray[i][colIndex] == (byte)1) {
-            return true;
+bool isIndexOutsidePGM(int index, PGM* PGMMask) {
+    if (index == PGMMask->H || index == -1) return true;
+    return false;
+}
+bool ContainsIllegal(PGM* illegalPixels, bounds* blockBounds) {
+    if (isIndexOutsidePGM(blockBounds->topBoundIndex, illegalPixels)) return true;
+    if (isIndexOutsidePGM(blockBounds->botBoundIndex, illegalPixels)) return true;
+    if (isIndexOutsidePGM(blockBounds->leftBoundIndex, illegalPixels)) return true;
+    if (isIndexOutsidePGM(blockBounds->rightBoundIndex, illegalPixels)) return true;
+    for (int i = blockBounds->topBoundIndex; i <= blockBounds->botBoundIndex; i++) {
+        for (int j = blockBounds->leftBoundIndex; j <= blockBounds->rightBoundIndex; j++) {
+
+            if (illegalPixels->rowArray[i][j] == (byte)1) {
+                return true;
+            }
         }
+        
     }
     
     return false;
 }
 
-bool rowContainsIllegal(PGM* illegalPixels, int rowIndex, int leftBoundIndex, int rightBoundIndex) {
-    if (rowIndex == illegalPixels->H || rowIndex == -1) return true;
-    for (int i = leftBoundIndex; i <= rightBoundIndex; i++) {
-        if (illegalPixels->rowArray[i][rowIndex] == (byte)1) {
-            return true;
-        }
+void maxOut(PGM* illegalPixels, bounds* outputBounds, bool widthFirst) {
+
+    while (!ContainsIllegal(illegalPixels, outputBounds)) {
+        if (widthFirst) outputBounds->leftBoundIndex--;
+        else outputBounds->topBoundIndex--;
     }
     
-    return false;
-}
+    if (widthFirst) outputBounds->leftBoundIndex++;
+    else outputBounds->topBoundIndex++;
 
-void maxOutCols(int leftColIndex, int rightColIndex, PGM* illegalPixels, int topBoundIndex, int botBoundIndex) {
-
-    while (!colContainsIllegal(illegalPixels, rightColIndex+1, topBoundIndex, botBoundIndex)) {
-        rightColIndex++;
+    while (!ContainsIllegal(illegalPixels, outputBounds)) {
+        if (widthFirst) outputBounds->rightBoundIndex++;
+        else outputBounds->botBoundIndex++;
     }
-    
-    while (!colContainsIllegal(illegalPixels, leftColIndex+1, topBoundIndex, botBoundIndex)) {
-        leftColIndex--;
-    }
-
-}
-
-void maxOutRows(int topRowIndex, int botRowIndex, PGM* illegalPixels, int leftBoundIndex, int rightBoundIndex) {
-
-    while (!rowContainsIllegal(illegalPixels, topRowIndex+1, leftBoundIndex, rightBoundIndex)) {
-        topRowIndex++;
-    }
-    
-    while (!rowContainsIllegal(illegalPixels, botRowIndex+1, leftBoundIndex, rightBoundIndex)) {
-        botRowIndex--;
-    }
+    if (widthFirst) outputBounds->rightBoundIndex--;
+    else outputBounds->botBoundIndex--;
 
 }
 
 bounds getBounds(PGM* PGMData, PGM* unfilledRequiredPixels, PGM* illegalPixels, int currentPixelIndex, bool widthFirst) {
     bounds output;
-    output.leftColIndex = currentPixelIndex % PGMData->W;
-    output.rightColIndex = output.leftColIndex;
-    output.topRowIndex = currentPixelIndex / PGMData->W;
-    output.botRowIndex = output.topRowIndex;
-    if (widthFirst) {
-        maxOutRows(output.topRowIndex, output.botRowIndex, illegalPixels, output.leftColIndex, output.rightColIndex);
-        maxOutCols(output.leftColIndex, output.rightColIndex, illegalPixels, output.topRowIndex, output.botRowIndex);
-    }
-    else {
-        maxOutCols(output.leftColIndex, output.rightColIndex, illegalPixels, output.topRowIndex, output.botRowIndex);
-        maxOutRows(output.topRowIndex, output.botRowIndex, illegalPixels, output.leftColIndex, output.rightColIndex);
-    }
+    output.leftBoundIndex = currentPixelIndex % PGMData->W;
+    output.rightBoundIndex = output.leftBoundIndex;
+    output.topBoundIndex = currentPixelIndex / PGMData->W;
+    output.botBoundIndex = output.topBoundIndex;
+
+    maxOut(illegalPixels, &output, widthFirst);
+    maxOut(illegalPixels, &output, !widthFirst);
     return output;
 }
 
 int getPixelsWithinBounds(PGM* unfilledRequiredPixels, bounds maxedBounds) {
     int num = 0;
-    for (int i = maxedBounds.topRowIndex; i < maxedBounds.botRowIndex; i++) {
-        for (int j = maxedBounds.leftColIndex; j < maxedBounds.rightColIndex; j++) {
+    for (int i = maxedBounds.topBoundIndex; i < maxedBounds.botBoundIndex; i++) {
+        for (int j = maxedBounds.leftBoundIndex; j < maxedBounds.rightBoundIndex; j++) {
             if (unfilledRequiredPixels->rowArray[i][j] == (byte)1) num++;
         }
     }
@@ -353,14 +352,14 @@ int getPixelsWithinBounds(PGM* unfilledRequiredPixels, bounds maxedBounds) {
 }
 
 void setPGMMaskToBounds(PGM* outputPGM, bounds maxedBounds) {
-    for (int i = maxedBounds.topRowIndex; i < maxedBounds.botRowIndex; i++) {
-        for (int j = maxedBounds.leftColIndex; j < maxedBounds.rightColIndex; j++) {
+    for (int i = maxedBounds.topBoundIndex; i <= maxedBounds.botBoundIndex; i++) {
+        for (int j = maxedBounds.leftBoundIndex; j <= maxedBounds.rightBoundIndex; j++) {
             outputPGM->rowArray[i][j] = (byte)1;
         }
     }
 }
 
-PGM* findLargestRectangle(PGM* PGMData, PGM* unfilledRequiredPixels, PGM* illegalPixels, int currentPixelIndex) {
+bounds findLargestRectangle(PGM* PGMData, PGM* unfilledRequiredPixels, PGM* illegalPixels, int currentPixelIndex, PGM* largestRectanglePGM) {
 
     bounds widthMaxedOutBounds = getBounds(PGMData, unfilledRequiredPixels, illegalPixels, currentPixelIndex, true);
     int widthMaxedOutFirst = getPixelsWithinBounds(unfilledRequiredPixels, widthMaxedOutBounds);
@@ -368,77 +367,128 @@ PGM* findLargestRectangle(PGM* PGMData, PGM* unfilledRequiredPixels, PGM* illega
     bounds colMaxedOutBounds = getBounds(PGMData, unfilledRequiredPixels, illegalPixels, currentPixelIndex, false);
     int colMaxedOutFirst = getPixelsWithinBounds(unfilledRequiredPixels, colMaxedOutBounds);
 
-    PGM* largestRectanglePGM = copyPGMMetaData(PGMData);
+    bounds output;
     if (widthMaxedOutFirst > colMaxedOutFirst) {
         setPGMMaskToBounds(largestRectanglePGM, widthMaxedOutBounds);
+        output = widthMaxedOutBounds;
     }
     else {
         setPGMMaskToBounds(largestRectanglePGM, colMaxedOutBounds);
+        output = colMaxedOutBounds;
+        
     }
     //strip rows and columns
-    return largestRectanglePGM;
+    return output;
 }
 
+void mergePixelColourMask(PGM* base, PGM* overlay) {
+    //where the new block (overlay) has pixels == 1, and base has pixels == 1, the pixels are set to 0 in base
+    //base is unfilledRequiredPixels and overlay is largestRectanglePGM
+    //so we are trying to remove the pixels which have been filled by the rectangle
+    for (int i = 0; i < base->H; i++) {
+        for (int j = 0; j < base->W; j++) {
+            if (overlay->rowArray[i][j] == (byte)1) //printf("i j %d %d\n", i, j);
+            if (base->rowArray[i][j] == (byte)1 && overlay->rowArray[i][j] == (byte)1) {
+                base->rowArray[i][j] = (byte)0;
+                //printf("they have pixels in common!!!!\n");
+            }
+        }
+    }
+
+}
+
+rectangle boundsToRectangle(byte colour, bounds inputBounds) {
+    rectangle output;
+    output.X = inputBounds.leftBoundIndex;
+    output.Y = inputBounds.topBoundIndex;
+    output.W = inputBounds.rightBoundIndex - inputBounds.leftBoundIndex + 1;
+    output.H = inputBounds.botBoundIndex - inputBounds.topBoundIndex + 1;
+    //printf("X Y %d %d\n", output.X, output.Y);
+    output.grayVal = colour;
+    return output;
+}
+
+void addRectangle(rectangleArr* blockList, rectangle block) {
+    blockList->len++;
+    blockList->arr = realloc(blockList->arr, blockList->len * sizeof(rectangle));
+    blockList->arr[blockList->len-1] = block;
+}
+
+void printMaskPercentageAndCount(PGM* mask) {
+    int count = 0;
+    for (int i = 0; i < 200; i++) {
+        for (int j = 0; j < 200; j++) {
+            if (mask->rowArray[i][j] == (byte)1) count++;
+        }
+    }
+    printf("count: %d\npercentage %f\n", count, (float)count/(float)40000);
+}
 rectangleArr* constructBlocks(byte colour, PGM* illegalPixels, PGM* PGMData) {
     
     rectangleArr* currentBlocks = malloc(sizeof(rectangleArr));
+    currentBlocks->arr = malloc(0);
+    currentBlocks->len = 0;
     //find all pixels of the current colour that haven't been filled yet
     PGM* unfilledRequiredPixels = copyPGMMetaData(PGMData);
     updateCurrentPixelColourMask(unfilledRequiredPixels, PGMData, colour);
     int numOfRequiredPixels = getNumOfPixelsInMask(unfilledRequiredPixels);
     while (numOfRequiredPixels != 0) {
+        //printMaskPercentageAndCount(unfilledRequiredPixels);
+        blockCount++;
         int currentPixelIndex = findPixelInMask(unfilledRequiredPixels);
         //form largest rectangle that contains currentPixel and does not contain illegal pixels
-        PGM* largestRectanglePGM = findLargestRectangle(PGMData, unfilledRequiredPixels, illegalPixels, currentPixelIndex);
-        mergePixelColourMap(unfilledRequiredPixels, largestRectanglePGM);
+        PGM* largestRectanglePGM = copyPGMMetaData(PGMData);
+        bounds largestRectangleBounds = findLargestRectangle(PGMData, unfilledRequiredPixels, illegalPixels, currentPixelIndex, largestRectanglePGM);
+        
+        mergePixelColourMask(unfilledRequiredPixels, largestRectanglePGM);
+        destroyPGM(largestRectanglePGM);
         numOfRequiredPixels = getNumOfPixelsInMask(unfilledRequiredPixels);
-        rectangle largestRectangle = PGMToRectangle(largestRectanglePGM);
-        addRectangle(currentBlocks, largestRectangle);
-        while (outerColumn does not contain unfilledRequiredPixel) {
-            delete column
-        }
 
-        while (outerRow does not contain unfilledRequiredPixel) {
-            delete row
-        }
+        rectangle largestRectangle = boundsToRectangle(colour, largestRectangleBounds);
+        addRectangle(currentBlocks, largestRectangle);
     }
+    destroyPGM(unfilledRequiredPixels);
     return currentBlocks;
 }
 
-rectangleArr* newRLE(PGM* PGMData) {
-    rectangleArr* blocks = malloc(sizeof(rectangleArr));
-    colourFreqList* colourFreqs = getColourFreqs(PGMData);
-    sortDescending(colourFreqs);
-    PGM* illegalPixels = copyPGMMetaData(PGMData);
-    for (int i = 0; i < colourFreqs->len; i++) {
-        byte currentColour = colourFreqs->arr[i].colour;
-        rectangleArr* currentColourBlocks = constructBlocks(colourFreqs->arr[i].colour, illegalPixels, PGMData);
-        appendBlocks(blocks, currentColourBlocks);
-        updateCurrentPixelColourMask(illegalPixels, PGMData, currentColour);
+void concatenateBlocks(rectangleArr* permList, rectangleArr* tempList) {
+    permList->arr = realloc(permList->arr, (permList->len + tempList->len) * sizeof(rectangle));
+    for (int i = 0; i < tempList->len; i++) {
+        permList->arr[permList->len] = tempList->arr[i];
+        permList->len++;
     }
-    destroyPGM(illegalPixels);
-    destroyPGM(PGMData);
-    return blocks;
 }
 
-
+void printColours(colourFreqList* c) {
+    for (int i = 0; i < c->len; i++) {
+        printf("%d %d\n", c->arr[i].colour, c->arr[i].freq);
+    }
+}
 rectangleArr* RLE(PGM* PGMData) {
     rectangleArr* blocks = malloc(sizeof(rectangleArr));
-    blocks->len = PGMData->H * PGMData->W;
-    blocks->arr = malloc(blocks->len * sizeof(rectangle));
-    for (int i = 0; i < PGMData->H; i++) {
-        for (int j = 0; j < PGMData->W; j++) { 
-            rectangle block;
-            block.X = j;
-            block.Y = i;
-            block.W = 1;
-            block.H = 1;
-            block.RGBAVal = PGMData->rowArray[i][j];
-            blocks->arr[i*PGMData->W + j] = block;
-        }
+    blocks->len = 0;
+    blocks->arr = malloc(0);
+    colourFreqList* colourFreqs = getColourFreqs(PGMData);
+    printf("working\n");
+    //printColours(colourFreqs);
+    sortDescending(colourFreqs);
+    //for (int i = 0; i < 100; i++) printf("\n");
+    printColours(colourFreqs);
+    PGM* illegalPixels = copyPGMMetaData(PGMData);
+    for (int i = 0; i < colourFreqs->len; i++) {
+        //printf("newColour:\n");
+        byte currentColour = colourFreqs->arr[i].colour;
+        rectangleArr* currentColourBlocks = constructBlocks(currentColour, illegalPixels, PGMData);
+        concatenateBlocks(blocks, currentColourBlocks);
+        free(currentColourBlocks->arr);
+        free(currentColourBlocks);
+        //printMaskPercentageAndCount(illegalPixels);
+        updateCurrentPixelColourMask(illegalPixels, PGMData, currentColour);
     }
-    destroy2DArr(PGMData->rowArray, PGMData->H);
-    free(PGMData);
+    free(colourFreqs->arr);
+    free(colourFreqs);
+    destroyPGM(illegalPixels);
+    destroyPGM(PGMData);
     return blocks;
 }
 
@@ -517,7 +567,7 @@ byteArray* rectangleArrToSK(rectangleArr* blockArray) {
         //set target y
         setTarget(blockArray->arr[i].Y + blockArray->arr[i].H, false, SKBytes);
         //set colour
-        setColour(blockArray->arr[i].RGBAVal, SKBytes);
+        setColour(blockArray->arr[i].grayVal, SKBytes);
         //draw
         addByte(setDY(0), SKBytes);
     }
@@ -564,7 +614,7 @@ char* getFileType(char* fileName) {
     char** fileNameComponents = split(fileName, ".", &outputLen);
     char* extension = malloc(sizeof(char) * (strlen(*(fileNameComponents + (outputLen-1))) + 1));
     strcpy(extension, *(fileNameComponents + (outputLen-1)));
-    destroy2DArr(fileNameComponents, outputLen);
+    destroy2DCharArr(fileNameComponents, outputLen);
     return extension;
 }
 
@@ -578,7 +628,7 @@ void writeToFile(byteArray* byteArr, char* fileName, char* inputFileType) {
     strcat(outputFileName, ".");
     if (strcmp(inputFileType, PGMEXT) == 0) strcat(outputFileName, SKEXT);
     else strcat(outputFileName, PGMEXT);
-    destroy2DArr(components, outputLen);
+    destroy2DCharArr(components, outputLen);
     //writing to the file
     FILE* outputFile;
     if((outputFile = fopen(outputFileName, "wb+")) != NULL){
@@ -600,6 +650,7 @@ void convertFile(int n, char* fileName) {
         destroyByteArray(bytes);
     }
     free(fileType);
+    printf("numOfBlocks: %d\n", blockCount);
 }
 
 //UNIT TESTS START
