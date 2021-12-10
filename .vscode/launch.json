@@ -9,7 +9,7 @@
             "type": "cppdbg",
             "request": "launch",
             "program": "${fileDirname}/converter",
-			"args": ["fractal.pgm"],
+			"args": ["new.sk"],
             "stopAtEntry": false,
             "cwd": "${fileDirname}",
             "environment": [],

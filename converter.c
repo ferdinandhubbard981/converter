@@ -1,19 +1,25 @@
-#include "displayfull.h"
 #include <stdio.h>
 #include <stdlib.h>
 #include <stdbool.h>
+#include <string.h>
+#include <stdbool.h>
+#include <math.h>
 
 #define PGMEXT "pgm"
 #define SKEXT "sk"
+typedef unsigned char     uint8_t;
+typedef unsigned short    uint16_t;
+typedef unsigned int      uint32_t;
+typedef unsigned long int uint64_t;
 typedef unsigned char byte;
-int blockCount = 0;
+const byte KEEPOPERAND  = (byte)63;
 enum { DX = 0, DY = 1, TOOL = 2, DATA = 3};
 
 // Tool Types
 enum { NONE = 0, BLOCK = 2, COLOUR = 3, TARGETX = 4, TARGETY = 5, PAUSE = 7};
 
 // Data structure holding the drawing state
-typedef struct state { int x, y, tx, ty; unsigned char tool; unsigned int data;} state;
+typedef struct state { int x, y, tx, ty; unsigned char tool; unsigned int data; byte colour;} state;
 
 typedef struct bounds {int leftBoundIndex, rightBoundIndex, topBoundIndex, botBoundIndex;} bounds;
 typedef struct colourFreq {byte colour; int freq;} colourFreq;
@@ -434,7 +440,6 @@ rectangleArr* constructBlocks(byte colour, PGM* illegalPixels, PGM* PGMData) {
     int numOfRequiredPixels = getNumOfPixelsInMask(unfilledRequiredPixels);
     while (numOfRequiredPixels != 0) {
         //printMaskPercentageAndCount(unfilledRequiredPixels);
-        blockCount++;
         int currentPixelIndex = findPixelInMask(unfilledRequiredPixels);
         //form largest rectangle that contains currentPixel and does not contain illegal pixels
         PGM* largestRectanglePGM = copyPGMMetaData(PGMData);
@@ -515,11 +520,14 @@ void addByte(byte input, byteArray* outputByteArr) {
 
 void setDataInt(int intVal, byteArray* outputByteArr) {
     byte val = (intVal >> (6 * 5)) & (byte)3;
-    addByte(setDATA(val), outputByteArr);
+    bool nonZeroHasOccured = false;
+    if (val != 0) nonZeroHasOccured = true;
+    if (nonZeroHasOccured) addByte(setDATA(val), outputByteArr);
     for (int i = 4; i >= 0; i--) {
         //printf("data: %d\n", i);
         val = (intVal >> (6 * i)) & (byte)63;
-        addByte(setDATA(val), outputByteArr);
+        if (val != 0) nonZeroHasOccured = true;
+        if (nonZeroHasOccured) addByte(setDATA(val), outputByteArr);
     }
 }
 
@@ -567,7 +575,14 @@ byteArray* rectangleArrToSK(rectangleArr* blockArray) {
         //set target y
         setTarget(blockArray->arr[i].Y + blockArray->arr[i].H, false, SKBytes);
         //set colour
-        setColour(blockArray->arr[i].grayVal, SKBytes);
+        if (i != 0) {
+            if (blockArray->arr[i].grayVal != blockArray->arr[i-1].grayVal) {      
+                setColour(blockArray->arr[i].grayVal, SKBytes);
+            }
+        }
+        else {
+            setColour(blockArray->arr[i].grayVal, SKBytes);
+        }
         //draw
         addByte(setDY(0), SKBytes);
     }
@@ -584,20 +599,161 @@ byteArray* convertPGMToSK(char* fileName) {
     return SKBytes;
 }
 
+//SKTOPGM
+state *newState() {
+  state* s = malloc(sizeof(state));
+  s->x = 0;
+  s->y = 0;
+  s->tx = 0;
+  s->ty = 0;
+  s->tool = 0;
+  s->data = 0;
+  s->colour = (byte)0;
+  return s;
+}
+
+unsigned int getData(state* s) {
+  int output = s->data;
+  s->data = 0;
+  return output;
+}
+
+int getOpcode(byte b) {
+  return (int)(b >> 6); // this is a placeholder only
+}
+
+// Extract an operand (-32..31) from the rightmost 6 bits of a byte.
+int getOperand(byte b) {
+  int output = 0;
+  if (b & (byte)pow(2, 5)) output = (b | (~KEEPOPERAND)); //set leading bits to 1 if input is two's complement negative 
+  else output = b & KEEPOPERAND; //if two's complement is positive then set leading bits to 0
+  return output;
+}
+
+void drawBlock(PGM* outputPGM, int x, int y, int w, int h, byte colour) {
+    for (int i = x; i < x+w; i++) {
+        for (int j = y; j < y+h; j++) {
+            outputPGM->rowArray[j][i] = colour;
+        }
+    }
+}
+void draw(PGM* outputPGM, state* s) {
+  switch(s->tool) {
+    case NONE:
+      break;
+    case BLOCK:
+      drawBlock(outputPGM, s->x, s->y, s->tx - s->x, s->ty - s->y, s->colour);
+      break;
+  }
+  s->x = s->tx;
+  s->y = s->ty;
+  }
+
+void runDX(state* s, int operand) {
+  s->tx += operand;
+}
+
+void runDY(PGM* outputPGM, state* s, int operand) {
+  s->ty += operand;
+  draw(outputPGM, s);
+}
 
 
+void changeTOOL(state* s, int operand) {
+  switch(operand) {
+    case COLOUR:
+    {
+      s->colour = getData(s);
+      break;
+    }
+    case TARGETX:
+      s->tx = getData(s);
+      break;
+
+    case TARGETY:
+      s->ty = getData(s);
+      break;
+
+    default:
+      s->tool = operand;
+      break;
+  }
+}
+
+void runDATA(state* s, int operand) {
+  byte input = (byte) operand;
+  if (operand < 0) {
+    input = ~input + 1; //convert negative two's complement int to positive two's complement int 
+    input = ((~input) & KEEPOPERAND) + 1; //convert positive two's complement int to negative two's complement 6 bit number by setting the 2 leading bits to 0
+  }
+  //if positive then no change needs to be made
+  s->data = (s->data << 6) | input;
+}
+
+void obey(PGM* outputPGM, state *s, byte op) {
+  int opcode = getOpcode(op);
+  int operand = getOperand(op);
+  switch (opcode) {
+    case DX:
+      runDX(s, operand);
+      break;
+    case DY:
+      runDY(outputPGM, s, operand);
+      break;
+    case TOOL:
+      changeTOOL(s, operand);
+      break;
+    case DATA:
+      runDATA(s, operand);
+      break;
+  }
+
+
+}
+PGM* initializePGM() {
+    PGM* newPGM = malloc(sizeof(PGM));
+    //copying metadata of original PGM (that was taken from the file)
+    newPGM->W = 200;
+    newPGM->H = 200;
+    newPGM->maxVal = 255;
+    newPGM->rowArray = malloc(newPGM->H * sizeof(byte*));
+    //iterating through every row
+    for (int i = 0; i < newPGM->H; i++) {
+        //mallocing every row
+        newPGM->rowArray[i] = malloc(newPGM->W * sizeof(byte));
+        //setting every pixel to 0;
+        for (int j = 0; j < newPGM->W; j++) {
+            newPGM->rowArray[i][j] = (byte)0;
+        }
+    }
+    return newPGM;
+}
+
+byteArray* convertDataToByteArray(PGM* input) {
+    const char header[16] = "P5 200 200 255\n";
+    byteArray* output = malloc(sizeof(byteArray));
+    output->len = input->H * input->W;
+    output->bytes = malloc((output->len + strlen(header)) * sizeof(byte));
+    for (int i = 0; i < strlen(header); i++) {
+        output->bytes[i] = header[i];
+    }
+    for (int i = 0; i < input->H  * input->W; i++) {
+        output->bytes[i + strlen(header)] = input->rowArray[i / input->W][i % input->W];
+    }
+    destroyPGM(input);
+    return output;
+}
 byteArray* convertSKToPGM(char* fileName) {
-    /*FILE* byteFile = fopen(filename, "rb");
+    PGM* data = initializePGM();
+    state *s = newState();
+    FILE* byteFile = fopen(fileName, "rb");
     byte currentByte = fgetc(byteFile);
-    int index = 0;
-    while (!feof(byteFile) && !s->end) {
-      if (index >= s->start) {
-        obey(d, s, currentByte);
-      }
-      currentByte = fgetc(byteFile);
-      index++;
-}*/
-    return NULL;
+    while (!feof(byteFile)) {
+        obey(data, s, currentByte);
+        currentByte = fgetc(byteFile);
+    }
+    free(s);
+    return convertDataToByteArray(data);
 }
 
 bool checkFileExists(char* fileName) {
@@ -628,6 +784,7 @@ void writeToFile(byteArray* byteArr, char* fileName, char* inputFileType) {
     strcat(outputFileName, ".");
     if (strcmp(inputFileType, PGMEXT) == 0) strcat(outputFileName, SKEXT);
     else strcat(outputFileName, PGMEXT);
+    printf("File %s has been written.", outputFileName);
     destroy2DCharArr(components, outputLen);
     //writing to the file
     FILE* outputFile;
@@ -650,7 +807,6 @@ void convertFile(int n, char* fileName) {
         destroyByteArray(bytes);
     }
     free(fileType);
-    printf("numOfBlocks: %d\n", blockCount);
 }
 
 //UNIT TESTS START

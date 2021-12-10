@@ -1,5 +1,9 @@
-change setData function, to not push until it encounters a byte that is != 0
-//make it update colour only when necessary
 check if targetx/y is more efficient than rundy/dx
+
+when finding next pixel, start with adjacent pixel, if doesn't contain relevant a requiredPixel, move on to next 
+
+
 strip rows and columns
 perfect bands sketch is 91 bytes
+//remove global vars ... blockcount
+//write unit tests
