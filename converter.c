@@ -420,15 +420,6 @@ void addRectangle(rectangleArr* blockList, rectangle block) {
     blockList->arr[blockList->len-1] = block;
 }
 
-void printMaskPercentageAndCount(PGM* mask) {
-    int count = 0;
-    for (int i = 0; i < 200; i++) {
-        for (int j = 0; j < 200; j++) {
-            if (mask->rowArray[i][j] == (byte)1) count++;
-        }
-    }
-    printf("count: %d\npercentage %f\n", count, (float)count/(float)40000);
-}
 rectangleArr* constructBlocks(byte colour, PGM* illegalPixels, PGM* PGMData) {
     
     rectangleArr* currentBlocks = malloc(sizeof(rectangleArr));
@@ -464,24 +455,14 @@ void concatenateBlocks(rectangleArr* permList, rectangleArr* tempList) {
     }
 }
 
-void printColours(colourFreqList* c) {
-    for (int i = 0; i < c->len; i++) {
-        printf("%d %d\n", c->arr[i].colour, c->arr[i].freq);
-    }
-}
 rectangleArr* RLE(PGM* PGMData) {
     rectangleArr* blocks = malloc(sizeof(rectangleArr));
     blocks->len = 0;
     blocks->arr = malloc(0);
     colourFreqList* colourFreqs = getColourFreqs(PGMData);
-    printf("working\n");
-    //printColours(colourFreqs);
     sortDescending(colourFreqs);
-    //for (int i = 0; i < 100; i++) printf("\n");
-    printColours(colourFreqs);
     PGM* illegalPixels = copyPGMMetaData(PGMData);
     for (int i = 0; i < colourFreqs->len; i++) {
-        //printf("newColour:\n");
         byte currentColour = colourFreqs->arr[i].colour;
         rectangleArr* currentColourBlocks = constructBlocks(currentColour, illegalPixels, PGMData);
         concatenateBlocks(blocks, currentColourBlocks);
@@ -510,9 +491,6 @@ byte setDY(int operand) {
 }
 
 void addByte(byte input, byteArray* outputByteArr) {
-    if (outputByteArr->len == 24) {
-        printf("");
-    }
     doublerealloc(outputByteArr);
     outputByteArr->bytes[outputByteArr->len] = input;
     outputByteArr->len++;
@@ -524,7 +502,6 @@ void setDataInt(int intVal, byteArray* outputByteArr) {
     if (val != 0) nonZeroHasOccured = true;
     if (nonZeroHasOccured) addByte(setDATA(val), outputByteArr);
     for (int i = 4; i >= 0; i--) {
-        //printf("data: %d\n", i);
         val = (intVal >> (6 * i)) & (byte)63;
         if (val != 0) nonZeroHasOccured = true;
         if (nonZeroHasOccured) addByte(setDATA(val), outputByteArr);
@@ -559,7 +536,6 @@ byteArray* rectangleArrToSK(rectangleArr* blockArray) {
     SKBytes->bytes = malloc(24);
     SKBytes->len = 0;
     for (int i = 0; i < blockArray->len; i++) {
-        //printf("i: %d\nlen: %d\n", i, SKBytes->len);
         //set tool to NONE
         addByte(setTOOL(NONE), SKBytes);
         //setx
